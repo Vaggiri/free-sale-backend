@@ -11,7 +11,7 @@ require('dotenv').config();
 const app = express();
 const server = http.createServer(app);
 
-// Enhanced CORS configuration
+// Enhanced CORS configuration for production
 const corsOptions = {
     origin: function (origin, callback) {
         // Allow requests with no origin (like mobile apps or curl requests)
@@ -23,12 +23,16 @@ const corsOptions = {
             'http://localhost:5500',
             'http://127.0.0.1:5500',
             'http://localhost:8080',
-            'http://127.0.0.1:8080'
+            'http://127.0.0.1:8080',
+            'https://your-frontend-domain.vercel.app', // Your frontend domain
+            'https://free-sale-frontend.vercel.app',    // Example frontend
+            'https://campus-trade-amrita.netlify.app/'
         ];
         
-        if (allowedOrigins.indexOf(origin) !== -1) {
+        if (allowedOrigins.indexOf(origin) !== -1 || origin.includes('vercel.app') || origin.includes('netlify.app')) {
             callback(null, true);
         } else {
+            console.log('🚫 Blocked by CORS:', origin);
             callback(new Error('Not allowed by CORS'));
         }
     },
@@ -43,7 +47,7 @@ app.use(cors(corsOptions));
 // Handle preflight requests
 app.options('*', cors(corsOptions));
 
-// Security middleware with CORS-friendly settings
+// Security middleware
 app.use(helmet({
     crossOriginResourcePolicy: { policy: "cross-origin" },
     crossOriginEmbedderPolicy: false
@@ -53,7 +57,7 @@ app.use(compression());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Serve static files with proper CORS headers
+// Serve static files
 app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
     setHeaders: (res, path) => {
         res.set('Access-Control-Allow-Origin', '*');
@@ -69,15 +73,20 @@ const io = socketIo(server, {
 // Enhanced MongoDB connection
 const connectDB = async () => {
     try {
-        console.log('Attempting to connect to MongoDB...');
+        console.log('🔗 Attempting to connect to MongoDB...');
         
-        const maskedURI = process.env.MONGODB_URI.replace(/:(.*)@/, ':****@');
-        console.log('Connection string:', maskedURI);
+        const maskedURI = process.env.MONGODB_URI ? 
+            process.env.MONGODB_URI.replace(/:(.*)@/, ':****@') : 'Not configured';
+        console.log('📝 Connection string:', maskedURI);
+        
+        if (!process.env.MONGODB_URI) {
+            throw new Error('MONGODB_URI is not defined in environment variables');
+        }
         
         await mongoose.connect(process.env.MONGODB_URI, {
             useNewUrlParser: true,
             useUnifiedTopology: true,
-            serverSelectionTimeoutMS: 5000,
+            serverSelectionTimeoutMS: 10000, // Increased timeout for production
             socketTimeoutMS: 45000,
         });
         
@@ -85,7 +94,8 @@ const connectDB = async () => {
         
     } catch (error) {
         console.error('❌ MongoDB connection failed:', error.message);
-        process.exit(1);
+        // Don't exit in production, let the app continue
+        console.log('🔄 App will continue without database connection');
     }
 };
 
@@ -107,17 +117,25 @@ app.get('/api/health', (req, res) => {
     res.json({ 
         status: 'OK', 
         database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected',
+        environment: process.env.NODE_ENV || 'development',
         timestamp: new Date().toISOString(),
         cors: 'Enabled'
     });
 });
 
-// Test CORS route
-app.get('/api/cors-test', (req, res) => {
+// Root route
+app.get('/', (req, res) => {
     res.json({
-        success: true,
-        message: 'CORS is working!',
-        timestamp: new Date().toISOString()
+        message: '🚀 CampusTrade Backend API is running!',
+        version: '1.0.0',
+        environment: process.env.NODE_ENV || 'development',
+        timestamp: new Date().toISOString(),
+        endpoints: {
+            auth: '/api/auth',
+            products: '/api/products',
+            users: '/api/users',
+            health: '/api/health'
+        }
     });
 });
 
@@ -146,7 +164,7 @@ app.set('io', io);
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    console.error('❌ Error:', err.stack);
     
     // Handle CORS errors
     if (err.message === 'Not allowed by CORS') {
@@ -158,7 +176,7 @@ app.use((err, req, res, next) => {
     
     res.status(500).json({ 
         success: false,
-        message: 'Something went wrong!' 
+        message: process.env.NODE_ENV === 'production' ? 'Something went wrong!' : err.message
     });
 });
 
@@ -170,11 +188,10 @@ app.use('/api/*', (req, res) => {
     });
 });
 
-const PORT = process.env.PORT || 5000;
-server.listen(PORT, () => {
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);
-    console.log(`📊 Environment: ${process.env.NODE_ENV}`);
-    console.log(`🌐 CORS enabled for: localhost:3000, localhost:5500`);
-    console.log(`🔧 Health check: http://localhost:${PORT}/api/health`);
-    console.log(`🔧 CORS test: http://localhost:${PORT}/api/cors-test`);
+    console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
+    console.log(`🌐 Health check: https://free-sale-backend.onrender.com/api/health`);
+    console.log(`🔗 MongoDB: ${mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'}`);
 });
