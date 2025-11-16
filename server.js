@@ -207,6 +207,50 @@ app.use('/api/*', (req, res) => {
     });
 });
 
+// Add this to your server.js
+const fs = require('fs');
+
+app.get('/api/debug-uploads', (req, res) => {
+    const uploadsPath = path.join(__dirname, 'uploads');
+    
+    try {
+        const exists = fs.existsSync(uploadsPath);
+        let files = [];
+        let stats = {};
+        
+        if (exists) {
+            files = fs.readdirSync(uploadsPath);
+            stats = {
+                path: uploadsPath,
+                exists: true,
+                fileCount: files.length,
+                files: files.slice(0, 20), // Show first 20 files
+                totalSize: files.reduce((total, file) => {
+                    try {
+                        const filePath = path.join(uploadsPath, file);
+                        const stat = fs.statSync(filePath);
+                        return total + stat.size;
+                    } catch (e) {
+                        return total;
+                    }
+                }, 0)
+            };
+        }
+        
+        res.json({
+            success: true,
+            uploads: stats,
+            currentWorkingDir: process.cwd(),
+            __dirname: __dirname
+        });
+    } catch (error) {
+        res.json({
+            success: false,
+            error: error.message
+        });
+    }
+});
+
 const PORT = process.env.PORT || 10000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Server running on port ${PORT}`);

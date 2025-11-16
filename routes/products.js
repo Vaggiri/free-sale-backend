@@ -135,104 +135,124 @@ router.get('/:id', async (req, res) => {
 });
 
 // Create product
+// Create product - FIXED VERSION
 router.post('/', [
-    auth,
-    upload.array('images', 5), // Max 5 images
-    body('title').trim().isLength({ min: 5 }).withMessage('Title must be at least 5 characters'),
-    body('description').trim().isLength({ min: 10 }).withMessage('Description must be at least 10 characters'),
-    body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
-    body('category').isIn(['books', 'electronics', 'cycles', 'hostel-needs', 'accessories', 'other']).withMessage('Invalid category'),
-    body('meetupLocation').isIn(['canteen', 'library', 'main-gate', 'hostel', 'other']).withMessage('Invalid meetup location')
+  auth,
+  upload.array('images', 5),
+  body('title').trim().isLength({ min: 5 }).withMessage('Title must be at least 5 characters'),
+  body('description').trim().isLength({ min: 10 }).withMessage('Description must be at least 10 characters'),
+  body('price').isFloat({ min: 0 }).withMessage('Price must be a positive number'),
+  body('category').isIn(['books', 'electronics', 'cycles', 'hostel-needs', 'accessories', 'other']).withMessage('Invalid category'),
+  body('meetupLocation').isIn(['canteen', 'library', 'main-gate', 'hostel', 'other']).withMessage('Invalid meetup location')
 ], async (req, res) => {
-    try {
-        const errors = validationResult(req);
-        if (!errors.isEmpty()) {
-            // Delete uploaded files if validation fails
-            if (req.files && req.files.length > 0) {
-                req.files.forEach(file => {
-                    fs.unlinkSync(file.path);
-                });
-            }
-            return res.status(400).json({ 
-                success: false, 
-                message: 'Validation failed', 
-                errors: errors.array() 
-            });
-        }
+  let uploadedFiles = []; // Track uploaded files for cleanup
+  
+  try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+          // Delete uploaded files if validation fails
+          if (req.files && req.files.length > 0) {
+              req.files.forEach(file => {
+                  fs.unlinkSync(file.path);
+              });
+          }
+          return res.status(400).json({ 
+              success: false, 
+              message: 'Validation failed', 
+              errors: errors.array() 
+          });
+      }
 
-        const { title, description, price, category, meetupLocation, condition } = req.body;
+      const { title, description, price, category, meetupLocation, condition } = req.body;
 
-        console.log('🆕 Creating product:', { title, price, category });
+      console.log('🆕 Creating product:', { title, price, category });
 
-        // Get image paths
-        const images = req.files ? req.files.map(file => file.filename) : [];
+      // Get image paths
+      const images = req.files ? req.files.map(file => {
+          uploadedFiles.push(file.path); // Track for cleanup
+          return file.filename;
+      }) : [];
 
-        const product = new Product({
-            title,
-            description,
-            price: parseFloat(price),
-            category,
-            meetupLocation,
-            condition: condition || 'good',
-            images,
-            seller: req.userId
-        });
+      const product = new Product({
+          title,
+          description,
+          price: parseFloat(price),
+          category,
+          meetupLocation,
+          condition: condition || 'good',
+          images,
+          seller: req.userId
+      });
 
-        await product.save();
-        await product.populate('seller', 'name rating college phone');
+      await product.save();
+      await product.populate('seller', 'name rating college phone');
 
-        console.log('✅ Product created successfully:', product._id);
+      console.log('✅ Product created successfully:', product._id);
 
-        res.status(201).json({
-            success: true,
-            message: 'Product created successfully',
-            product
-        });
+      // 🔔 EMIT REAL-TIME NOTIFICATION - Wrap in try-catch to prevent breaking the response
+      try {
+          const io = req.app.get('io');
+          if (io) {
+              // Notify all users in the same college
+              const collegeRoom = `college-${product.seller.college.replace(/\s+/g, '-').toLowerCase()}`;
+              io.to(collegeRoom).emit('new-product', {
+                  type: 'NEW_PRODUCT',
+                  message: `New product listed: ${product.title}`,
+                  product: {
+                      id: product._id,
+                      title: product.title,
+                      price: product.price,
+                      category: product.category,
+                      seller: product.seller.name,
+                      college: product.seller.college,
+                      image: product.images[0] || null
+                  },
+                  timestamp: new Date()
+              });
+              
+              console.log(`🔔 Notification sent to college room: ${collegeRoom}`);
+          }
+      } catch (notificationError) {
+          console.error('❌ Notification error (non-fatal):', notificationError);
+          // Don't throw error, just log it
+      }
 
-        const io = req.app.get('io');
-        if (io) {
-            // Notify all users in the same college
-            const collegeRoom = `college-${product.seller.college.replace(/\s+/g, '-').toLowerCase()}`;
-            io.to(collegeRoom).emit('new-product', {
-                type: 'NEW_PRODUCT',
-                message: `New product listed: ${product.title}`,
-                product: {
-                    id: product._id,
-                    title: product.title,
-                    price: product.price,
-                    category: product.category,
-                    seller: product.seller.name,
-                    college: product.seller.college,
-                    image: product.images[0] || null
-                },
-                timestamp: new Date()
-            });
-            
-            console.log(`🔔 Notification sent to college room: ${collegeRoom}`);
-        }
+      // Send success response ONLY ONCE
+      res.status(201).json({
+          success: true,
+          message: 'Product created successfully',
+          product
+      });
 
-        res.status(201).json({
-            success: true,
-            message: 'Product created successfully',
-            product
-        });
-
-
-    } catch (error) {
-        console.error('❌ Create product error:', error);
-        // Delete uploaded files if error occurs
-        if (req.files && req.files.length > 0) {
-            req.files.forEach(file => {
-                fs.unlinkSync(file.path);
-            });
-        }
-        res.status(500).json({
-            success: false,
-            message: 'Server error while creating product'
-        });
-    }
+  } catch (error) {
+      console.error('❌ Create product error:', error);
+      
+      // Clean up uploaded files if error occurs
+      if (uploadedFiles.length > 0) {
+          uploadedFiles.forEach(filePath => {
+              try {
+                  if (fs.existsSync(filePath)) {
+                      fs.unlinkSync(filePath);
+                  }
+              } catch (cleanupError) {
+                  console.error('❌ File cleanup error:', cleanupError);
+              }
+          });
+      }
+      
+      // Check if headers have already been sent
+      if (res.headersSent) {
+          console.error('❌ Headers already sent, cannot send error response');
+          return;
+      }
+      
+      // Send error response ONLY if headers haven't been sent
+      res.status(500).json({
+          success: false,
+          message: 'Server error while creating product'
+      });
+  }
 });
-
 // Update product
 router.put('/:id', [
     auth,
