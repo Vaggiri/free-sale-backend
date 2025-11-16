@@ -65,6 +65,25 @@ app.use('/uploads', express.static(path.join(__dirname, 'uploads'), {
     }
 }));
 
+app.get('/api/cors-test', (req, res) => {
+  res.json({
+      success: true,
+      message: 'CORS is working!',
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'development'
+  });
+});
+
+// File upload test endpoint
+app.get('/api/uploads-test', (req, res) => {
+  res.json({
+      success: true,
+      message: 'Uploads directory is accessible',
+      uploadsPath: '/uploads/',
+      exampleUrl: `${req.protocol}://${req.get('host')}/uploads/product-123456789.jpg`
+  });
+});
+
 // Socket.io configuration
 const io = socketIo(server, {
     cors: corsOptions
